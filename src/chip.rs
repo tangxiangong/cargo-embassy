@@ -1,78 +1,72 @@
-pub mod family;
-pub mod target;
-
-use family::esp::Variant;
-
-use crate::error::{Error, InvalidChip};
-use std::str::FromStr;
-
-pub(crate) struct Chip {
-    pub family: family::Family,
-    pub target: target::Target,
-    pub name: String,
+use anyhow::{Context, Result, bail};
+use probe_rs::config::{CoreType, Registry, Target};
+use std::sync::LazyLock;
+static REGISTRY: LazyLock<Registry> = LazyLock::new(Registry::from_builtin_families);
+pub fn get_target_by_name(name: &str) -> Result<Target> {
+    Ok(REGISTRY.get_target_by_name(name)?)
 }
 
-impl FromStr for Chip {
-    type Err = Error;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Family {
+    Stm32,
+    Nrf,
+    Esp,
+}
 
-    fn from_str(chip: &str) -> Result<Self, Self::Err> {
-        use family::{mem_region::MemRegion, Family::*};
-        use target::Target::*;
+#[derive(Debug, Clone)]
+pub struct Chip {
+    pub name: String,
+    pub family: Family,
+    pub target: String,
+    pub hal_feature: String,
+}
 
-        let chips = [
-            // nRF
-            ("nrf52805", (NRF(MemRegion::NRF52805), Thumbv7f)),
-            ("nrf52810", (NRF(MemRegion::NRF52810), Thumbv7f)),
-            ("nrf52811", (NRF(MemRegion::NRF52811), Thumbv7f)),
-            ("nrf52820", (NRF(MemRegion::NRF52820), Thumbv7f)),
-            ("nrf52832_xxaa", (NRF(MemRegion::NRF52832_XXAA), Thumbv7f)),
-            ("nrf52832_xxab", (NRF(MemRegion::NRF52832_XXAB), Thumbv7f)),
-            ("nrf52833", (NRF(MemRegion::NRF52833), Thumbv7f)),
-            ("nrf52840", (NRF(MemRegion::NRF52840), Thumbv7f)),
-            // TODO: nrf53x and nrf91x
-            // STM
-            ("stm32c0", (STM, Thumbv6)),
-            ("stm32f0", (STM, Thumbv6)),
-            ("stm32f1", (STM, Thumbv7)),
-            ("stm32f2", (STM, Thumbv7)),
-            ("stm32f3", (STM, Thumbv7e)),
-            ("stm32f4", (STM, Thumbv7e)),
-            ("stm32f7", (STM, Thumbv7e)),
-            ("stm32g0", (STM, Thumbv6)),
-            ("stm32g4", (STM, Thumbv7f)),
-            ("stm32h5", (STM, Thumbv8)),
-            ("stm32h7", (STM, Thumbv7e)),
-            ("stm32l0", (STM, Thumbv6)),
-            ("stm32l1", (STM, Thumbv7)),
-            ("stm32l4", (STM, Thumbv7e)),
-            ("stm32l5", (STM, Thumbv8)),
-            ("stm32u5", (STM, Thumbv8)),
-            ("stm32wb", (STM, Thumbv7e)),
-            ("stm32wba", (STM, Thumbv8)),
-            ("stm32wl", (STM, Thumbv7e)),
-            // ESP32
-            ("esp32c3", (ESP(Variant::C3), Risc32Imc)),
-            ("esp32s2", (ESP(Variant::S2), XTensaS2)),
-            ("esp32s3", (ESP(Variant::S3), XTensaS3)),
-        ];
+pub fn normalize(s: &str) -> String {
+    s.to_ascii_lowercase().replace('-', "_")
+}
 
-        let (family, target) = chips
-            .iter()
-            .find_map(|(s, (f, t))| chip.starts_with(s).then(|| (f.clone(), t.clone())))
-            .ok_or(match chip {
-                "nrf52832" => Error::InvalidChip(InvalidChip::Ambiguous),
-                _ => Error::InvalidChip(InvalidChip::Unknown),
-            })?;
-
+impl Chip {
+    pub fn cortex(name: &str) -> Result<Self> {
+        let target =
+            get_target_by_name(name).context("Unknown chip in bundled probe-rs database")?;
+        let name = target.name;
+        let lower = normalize(&name);
+        let family = if lower.starts_with("stm32") {
+            Family::Stm32
+        } else if lower.starts_with("nrf52") {
+            Family::Nrf
+        } else {
+            bail!("Unsupported Cortex-M family: {name}")
+        };
+        let core = target.cores.first().context("Chip has no core")?;
+        let triple = match core.core_type {
+            CoreType::Armv6m => "thumbv6m-none-eabi",
+            CoreType::Armv7m => "thumbv7m-none-eabi",
+            CoreType::Armv7em => "thumbv7em-none-eabi",
+            CoreType::Armv8m => "thumbv8m.main-none-eabi",
+            _ => bail!("Not a supported Cortex-M chip: {name}"),
+        };
+        let hal_feature = if family == Family::Nrf {
+            lower.split('_').next().unwrap_or(&lower).to_owned()
+        } else {
+            lower
+        };
         Ok(Self {
-            name: match &family {
-                STM => chip.to_string(),
-                // FRAGILE: "_" is used to coerce probe-rs chip search
-                NRF(_) => chip.split('_').next().unwrap().to_string(),
-                ESP(variant) => variant.to_string(),
-            },
+            name,
             family,
-            target,
+            target: triple.into(),
+            hal_feature,
         })
     }
+}
+
+pub fn cortex_names() -> Result<Vec<String>> {
+    let mut names = REGISTRY.search_chips("");
+    names.retain(|s| {
+        let s = normalize(s);
+        s.starts_with("stm32") || s.starts_with("nrf52")
+    });
+    names.sort();
+    names.dedup();
+    Ok(names)
 }
