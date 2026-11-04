@@ -1,3 +1,4 @@
+use crate::i18n::{self, text as t};
 use crate::{
     cli::GenerateArgs,
     config::{Catalog, Project},
@@ -36,7 +37,10 @@ enum Page {
 pub fn run(catalog: &Catalog, seed: &GenerateArgs) -> Result<Option<Project>> {
     ensure!(
         io::stdin().is_terminal() && io::stdout().is_terminal(),
-        "TUI requires an interactive terminal; use init <name> --chip <chip> --headless"
+        crate::tr!(
+            "TUI requires an interactive terminal; use init <name> --chip <chip> --headless",
+            "TUI 需要交互式终端；脚本请使用 init <name> --chip <chip> --headless"
+        )
     );
     let mut name = seed.name.clone().unwrap_or_else(|| "my-project".into());
     let mut output = if seed.output_path.is_empty() {
@@ -84,52 +88,62 @@ pub fn run(catalog: &Catalog, seed: &GenerateArgs) -> Result<Option<Project>> {
         }
         terminal.draw(|f| {
             let area = f.area();
-            if area.width < 60 || area.height < 20 { f.render_widget(Paragraph::new("Resize terminal to at least 60 x 20.\nEsc / Ctrl-C: cancel").wrap(Wrap { trim: false }),area); return; }
+            if area.width < 60 || area.height < 20 { f.render_widget(Paragraph::new(t("Resize terminal to at least 60 x 20.\nEsc / Ctrl-C: cancel", "请将终端调整至至少 60 × 20。\nEsc / Ctrl-C：取消")).wrap(Wrap { trim: false }),area); return; }
             let layout = Layout::default().direction(Direction::Vertical).constraints([Constraint::Length(3),Constraint::Min(5),Constraint::Length(5),Constraint::Length(2)]).split(area);
-            let title = match page { Page::Setup => "1 / Project and chip", Page::Options => "2 / Configure features", Page::Review => "3 / Review and generate" };
-            f.render_widget(Paragraph::new(format!("  CARGO EMBASSY    |    {title}")).style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)).block(Block::default().borders(Borders::BOTTOM)),layout[0]);
+            let title = match page { Page::Setup => t("1 / Project and chip", "1 / 项目与芯片"), Page::Options => t("2 / Configure features", "2 / 功能配置"), Page::Review => t("3 / Review and generate", "3 / 预览并生成") };
+            f.render_widget(Paragraph::new(format!("  CARGO EMBASSY    |    {title}\n  F3: 中文 / English")).style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)).block(Block::default().borders(Borders::BOTTOM)),layout[0]);
             let mut help = String::new();
             match page {
                 Page::Setup => {
                     let body = Layout::default().constraints([Constraint::Length(5),Constraint::Min(1)]).split(layout[1]);
-                    let values = [format!("Project name: {name}"),format!("Chip search: {query}"),format!("Output parent: {output}"),format!("Toolchain: {}",if toolchain.is_empty() {"auto"} else {&toolchain})];
+                    let values = [crate::tr!("Project name: {name}", "项目名称：{name}"),crate::tr!("Chip search: {query}", "芯片筛选：{query}"),crate::tr!("Output parent: {output}", "输出父目录：{output}"),crate::tr!("Toolchain: {}", "工具链：{}",if toolchain.is_empty() {t("auto", "自动")} else {&toolchain})];
                     let text = values.iter().enumerate().map(|(i,v)| format!("{} {v}",if focus==i {">"} else {" "})).collect::<Vec<_>>().join("\n");
                     f.render_widget(Paragraph::new(text),body[0]);
-                    let list = List::new(matches.iter().map(|s| ListItem::new(s.as_str()))).block(Block::default().borders(Borders::ALL).title(format!("Chips — {} matches",matches.len()))).highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan)).highlight_symbol("> ");
+                    let list = List::new(matches.iter().map(|s| ListItem::new(s.as_str()))).block(Block::default().borders(Borders::ALL).title(crate::tr!("Chips — {} matches", "芯片 — {} 个匹配项",matches.len()))).highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan)).highlight_symbol("> ");
                     let mut state = ListState::default().with_selected(Some(selected_chip));
                     f.render_stateful_widget(list,body[1],&mut state);
-                    help = "Type to edit the focused field. Tab changes fields. Up/Down selects a chip. Enter opens options. Toolchain: Left/Right cycles installed toolchains; auto uses stable / esp, or nightly for stack protection.".into();
+                    help = t("Type to edit the focused field. Tab changes fields. Up/Down selects a chip. Enter opens options. Toolchain: Left/Right cycles installed toolchains; auto uses stable / esp, or nightly for stack protection.", "直接输入以编辑当前字段；Tab 切换字段，上下键选择芯片，Enter 进入配置。工具链字段可用左右键切换本机已安装项；自动模式选择 stable / esp，启用栈保护时选择 nightly。").into();
                 }
                 Page::Options => if let Some(p) = &project {
                     let list = List::new(rows.iter().map(|(_,item)| {
                         let (prefix, available) = match item { GeneratorOptionItem::Category(_) => (">",true),GeneratorOptionItem::Option(o) => (if p.has(&o.name) {"[x]"} else {"[ ]"},p.config.is_option_compatible(o)) };
-                        ListItem::new(format!("{prefix} {}{}",item.title(),if available {""} else {" (unavailable)"})).style(if available {Style::default()} else {Style::default().fg(Color::DarkGray)})
-                    })).block(Block::default().borders(Borders::ALL).title(format!("{} / {}",p.chip.name,if path.is_empty() {"Options"} else {"Category"}))).highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan)).highlight_symbol("> ");
+                        ListItem::new(format!("{prefix} {}{}",i18n::title(item.name(), item.title()),if available {""} else {t(" (unavailable)", "（不可用）")})).style(if available {Style::default()} else {Style::default().fg(Color::DarkGray)})
+                    })).block(Block::default().borders(Borders::ALL).title(format!("{} / {}",p.chip.name,if path.is_empty() {t("Options", "选项")} else {t("Category", "分类")}))).highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan)).highlight_symbol("> ");
                     let mut state = ListState::default().with_selected(Some(selected));
                     f.render_stateful_widget(list,layout[1],&mut state);
                     if let Some((_,item)) = rows.get(selected) {
-                        help = item.title().to_owned();
+                        help = i18n::title(item.name(), item.title()).to_owned();
                         if let GeneratorOptionItem::Option(o) = item {
                             let evicted = p.config.would_force_deselect(o);
-                            if evicted.iter().any(|name| name == "embassy") { help.push_str("\nRequired by Embassy; cannot be disabled."); } else if !evicted.is_empty() { help.push_str(&format!("\nWill clear: {}", evicted.join(", "))); }
-                            if !o.requires.is_empty() { help.push_str(&format!("\nRequires: {}", o.requires.join(", "))); }
+                            if evicted.iter().any(|name| name == "embassy") { help.push_str(t("\nRequired by Embassy; cannot be disabled.", "\nEmbassy 依赖此项，不能关闭。")); } else if !evicted.is_empty() { help.push_str(&crate::tr!("\nWill clear: {}", "\n将取消：{}", evicted.join(", "))); }
+                            if !o.requires.is_empty() { help.push_str(&crate::tr!("\nRequires: {}", "\n依赖：{}", o.requires.join(", "))); }
                         }
-                        if !item.help().is_empty() { help.push_str(&format!("\n{}", item.help())); }
+                        let description = i18n::help(item.name(), item.help());
+                        if !description.is_empty() { help.push_str(&format!("\n{description}")); }
                     }
                 },
                 Page::Review => if let Some(p) = &project {
-                    let text = format!("Project: {}\nDestination: {}/{}\nChip: {}\nOptions: {}\n\nFiles ({}):\n{}",p.name,p.output,p.name,p.chip.name,p.selected().join(", "),preview.len(),preview.join("\n"));
-                    f.render_widget(Paragraph::new(text).wrap(Wrap{trim:false}).scroll((selected as u16,0)).block(Block::default().borders(Borders::ALL).title("Nothing has been written yet")),layout[1]);
-                    help = "Enter generates exactly this project. Esc returns to options. Ctrl-C cancels without writing. Up/Down scrolls the preview.".into();
+                    let text = crate::tr!("Project: {}\nDestination: {}/{}\nChip: {}\nOptions: {}\n\nFiles ({}):\n{}", "项目：{}\n位置：{}/{}\n芯片：{}\n选项：{}\n\n文件（{}）：\n{}",p.name,p.output,p.name,p.chip.name,p.selected().join(", "),preview.len(),preview.join("\n"));
+                    f.render_widget(Paragraph::new(text).wrap(Wrap{trim:false}).scroll((selected as u16,0)).block(Block::default().borders(Borders::ALL).title(t("Nothing has been written yet", "尚未写入任何文件"))),layout[1]);
+                    help = t("Enter generates exactly this project. Esc returns to options. Ctrl-C cancels without writing. Up/Down scrolls the preview.", "Enter 生成当前项目；Esc 返回修改；Ctrl-C 取消且不写入文件；上下键滚动预览。").into();
                 },
             }
             f.render_widget(Paragraph::new(if message.is_empty() {help} else {message.clone()}).wrap(Wrap{trim:false}).style(Style::default().fg(if message.is_empty(){Color::Gray}else{Color::Yellow})).block(Block::default().borders(Borders::TOP)),layout[2]);
-            f.render_widget(Paragraph::new(match page {Page::Setup=>"Tab: field  ↑↓: chip  Enter: configure  Ctrl-C/Esc: cancel",Page::Options=>"↑↓: move  Enter/Space: select  Esc: back  F2: review  Ctrl-C: cancel",Page::Review=>"Enter: generate  ↑↓: scroll  Esc: edit  Ctrl-C: cancel"}).wrap(Wrap { trim: false }),layout[3]);
+            f.render_widget(Paragraph::new(match page {Page::Setup=>t("Tab: field  ↑↓: chip  Enter: configure  Ctrl-C/Esc: cancel", "Tab：字段  ↑↓：芯片  Enter：配置  Ctrl-C/Esc：取消"),Page::Options=>t("↑↓: move  Enter/Space: select  Esc: back  F2: review  Ctrl-C: cancel", "↑↓：移动  Enter/空格：选择  Esc：返回  F2：预览  Ctrl-C：取消"),Page::Review=>t("Enter: generate  ↑↓: scroll  Esc: edit  Ctrl-C: cancel", "Enter：生成  ↑↓：滚动  Esc：修改  Ctrl-C：取消")}).wrap(Wrap { trim: false }),layout[3]);
         })?;
         let Event::Key(key) = event::read()? else {
             continue;
         };
         if key.kind == KeyEventKind::Release {
+            continue;
+        }
+        if key.code == KeyCode::F(3) {
+            i18n::set(if i18n::current() == i18n::Language::En {
+                i18n::Language::Zh
+            } else {
+                i18n::Language::En
+            });
+            message.clear();
             continue;
         }
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -163,9 +177,9 @@ pub fn run(catalog: &Catalog, seed: &GenerateArgs) -> Result<Option<Project>> {
                 }
                 KeyCode::Enter => {
                     let result = (|| -> Result<Project> {
-                        let chip_name = matches
-                            .get(selected_chip)
-                            .ok_or_else(|| anyhow::anyhow!("No matching chip"))?;
+                        let chip_name = matches.get(selected_chip).ok_or_else(|| {
+                            anyhow::anyhow!(crate::tr!("No matching chip", "没有匹配的芯片"))
+                        })?;
                         let mut p = catalog.project(catalog.chip(chip_name)?)?;
                         let same_chip = project
                             .as_ref()

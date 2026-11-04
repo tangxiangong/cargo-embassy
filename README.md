@@ -31,6 +31,28 @@ access a probe, or flash hardware. `rustfmt` must be installed; generated Rust
 is formatted before the destination is created. Install target toolchains and
 flash/debug tools when you are ready to build and run the resulting firmware.
 
+## Language / 语言
+
+The interface supports English and Simplified Chinese:
+
+```sh
+cargo embassy --lang zh
+cargo embassy tui --lang en
+cargo embassy init demo --chip esp32c6 --lang zh --dry-run
+cargo embassy --lang zh --help
+```
+
+Press **F3** in the TUI to switch between 中文 and English without losing the
+current configuration. Language selection priority is `--lang` >
+`CARGO_EMBASSY_LANG` (`en` or `zh`) > `LC_ALL` > `LC_MESSAGES` > `LANG`.
+Empty environment values are ignored. Chinese locale tags such as
+`zh_CN.UTF-8`, `zh_TW`, and `zh-HK` select the Simplified Chinese interface;
+other locales and an unset locale use English.
+
+中文可使用 `--lang zh`，英文使用 `--lang en`；TUI 内按 **F3** 即时切换。
+语言只影响界面、帮助和提示，不改变命令名、选项 ID、芯片名称或生成文件。
+外部工具与依赖库返回的底层诊断保留原文；新增但尚无译文的上游选项回退为英文。
+
 ## Command line
 
 ```sh

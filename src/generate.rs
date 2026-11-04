@@ -22,17 +22,19 @@ pub fn plan(catalog: &Catalog, project: &Project) -> Result<Files> {
     for path in files.keys() {
         ensure!(
             process::is_safe_relative_path(path),
-            "Unsafe template path: {path}"
+            crate::tr!("Unsafe template path: {path}", "模板路径不安全：{path}")
         );
     }
     for (name, text) in &files {
         if name.ends_with(".toml") {
-            toml::from_str::<toml::Value>(text)
-                .with_context(|| format!("Invalid generated TOML: {name}"))?;
+            toml::from_str::<toml::Value>(text).with_context(|| {
+                crate::tr!("Invalid generated TOML: {name}", "生成的 TOML 无效：{name}")
+            })?;
         }
         if name.ends_with(".json") {
-            json5::from_str::<serde_json::Value>(text)
-                .with_context(|| format!("Invalid generated JSON: {name}"))?;
+            json5::from_str::<serde_json::Value>(text).with_context(|| {
+                crate::tr!("Invalid generated JSON: {name}", "生成的 JSON 无效：{name}")
+            })?;
         }
     }
     Ok(files)
@@ -115,7 +117,10 @@ fn esp(catalog: &Catalog, p: &Project) -> Result<Files> {
         })?;
         ensure!(
             files.insert(path, text).is_none(),
-            "Duplicate template output: {source}"
+            crate::tr!(
+                "Duplicate template output: {source}",
+                "模板生成了重复的输出文件：{source}"
+            )
         );
     }
     Ok(files)
@@ -126,8 +131,11 @@ pub fn write(p: &Project, files: &Files) -> Result<PathBuf> {
     let parent = PathBuf::from(&p.output);
     ensure!(
         parent.is_dir(),
-        "Output parent must already exist: {}",
-        parent.display()
+        crate::tr!(
+            "Output parent must already exist: {}",
+            "输出父目录必须已存在：{}",
+            parent.display()
+        )
     );
     let destination = parent.join(&p.name);
     // Stage all writes; reserve the destination exclusively so another project is never overwritten.
@@ -135,7 +143,7 @@ pub fn write(p: &Project, files: &Files) -> Result<PathBuf> {
     for (path, text) in files {
         ensure!(
             process::is_safe_relative_path(path),
-            "Unsafe output path: {path}"
+            crate::tr!("Unsafe output path: {path}", "输出路径不安全：{path}")
         );
         let path = staging.path().join(path);
         if let Some(parent) = path.parent() {
@@ -157,14 +165,23 @@ pub fn write(p: &Project, files: &Files) -> Result<PathBuf> {
             .args(["--edition", "2024"])
             .args(&rust_files)
             .output()
-            .context("rustfmt is required to format generated Rust sources")?;
+            .context(crate::tr!(
+                "rustfmt is required to format generated Rust sources",
+                "格式化生成的 Rust 源码需要安装 rustfmt"
+            ))?;
         ensure!(
             output.status.success(),
-            "Generated Rust failed formatting: {}",
-            String::from_utf8_lossy(&output.stderr)
+            crate::tr!(
+                "Generated Rust failed formatting: {}",
+                "生成的 Rust 源码格式化失败：{}",
+                String::from_utf8_lossy(&output.stderr)
+            )
         );
     }
-    fs::create_dir(&destination).context("Cannot reserve destination; nothing was overwritten")?;
+    fs::create_dir(&destination).context(crate::tr!(
+        "Cannot reserve destination; nothing was overwritten",
+        "无法创建目标目录；未覆盖已有文件"
+    ))?;
     let result = (|| -> Result<()> {
         for entry in fs::read_dir(staging.path())? {
             let entry = entry?;

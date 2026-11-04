@@ -56,7 +56,10 @@ impl Catalog {
         } else if matches.len() == 1 {
             matches[0]
         } else {
-            bail!("Unknown or ambiguous chip '{name}'; choose a full name from list-chips")
+            bail!(crate::tr!(
+                "Unknown or ambiguous chip '{name}'; choose a full name from list-chips",
+                "芯片 '{name}' 不存在或有多个匹配项；请从 list-chips 中选择完整名称"
+            ))
         };
         Chip::cortex(selected)
     }
@@ -141,17 +144,29 @@ impl Project {
         }
         ensure!(
             visiting.insert(name.into()),
-            "Cyclic option requirement: {name}"
+            crate::tr!(
+                "Cyclic option requirement: {name}",
+                "选项依赖存在循环：{name}"
+            )
         );
         let index = self
             .config
             .flat_options
             .iter()
             .position(|o| o.name == name && self.config.is_option_compatible(o))
-            .with_context(|| format!("Option '{name}' is unavailable for {}", self.chip.name))?;
+            .with_context(|| {
+                crate::tr!(
+                    "Option '{name}' is unavailable for {}",
+                    "芯片 {} 不支持选项 '{name}'",
+                    self.chip.name
+                )
+            })?;
         ensure!(
             self.config.flat_options[index].selection_group != "chip" || name == self.chip.name,
-            "Use --chip or the chip selector to change the target"
+            crate::tr!(
+                "Use --chip or the chip selector to change the target",
+                "请使用 --chip 或芯片选择器更改目标"
+            )
         );
         let requires = self.config.flat_options[index].requires.clone();
         for req in requires.iter().filter(|r| !r.starts_with('!')) {
@@ -160,7 +175,10 @@ impl Project {
         self.config.select_idx(index);
         ensure!(
             self.has(name),
-            "Cannot enable '{name}': conflicts with current selection"
+            crate::tr!(
+                "Cannot enable '{name}': conflicts with current selection",
+                "无法启用 '{name}'：与当前配置冲突"
+            )
         );
         visiting.remove(name);
         Ok(())
@@ -177,14 +195,17 @@ impl Project {
         {
             ensure!(
                 name != self.chip.name && name != "embassy",
-                "Chip and Embassy are required"
+                crate::tr!("Chip and Embassy are required", "芯片和 Embassy 为必选项")
             );
             let cleared = self
                 .config
                 .would_force_deselect(&self.config.flat_options[index]);
             ensure!(
                 !cleared.iter().any(|name| name == "embassy"),
-                "This option is required by Embassy"
+                crate::tr!(
+                    "This option is required by Embassy",
+                    "Embassy 依赖此选项，不能关闭"
+                )
             );
             self.config.deselect_idx(index);
             Ok(())
@@ -204,7 +225,10 @@ impl Project {
                     .name
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
-            "Project name must start with a letter and contain only letters, digits, - or _"
+            crate::tr!(
+                "Project name must start with a letter and contain only letters, digits, - or _",
+                "项目名称必须以英文字母开头，只能包含英文字母、数字、- 或 _"
+            )
         );
         ensure!(
             ![
@@ -212,38 +236,50 @@ impl Project {
                 "alloc"
             ]
             .contains(&self.name.as_str()),
-            "Reserved project name"
+            crate::tr!("Reserved project name", "该项目名称为保留名称")
         );
         ensure!(
             Path::new(&self.output).is_dir(),
-            "Output parent must already be a directory"
+            crate::tr!(
+                "Output parent must already be a directory",
+                "输出父目录必须是已存在的目录"
+            )
         );
         ensure!(
             !Path::new(&self.output).join(&self.name).try_exists()?,
-            "Destination already exists"
+            crate::tr!("Destination already exists", "目标目录已存在")
         );
         ensure!(
             self.toolchain
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c)),
-            "Invalid toolchain name"
+            crate::tr!("Invalid toolchain name", "工具链名称无效")
         );
         for i in &self.config.selected {
             let o = &self.config.flat_options[*i];
             ensure!(
                 self.config.is_option_active(o),
-                "Invalid selection: {} (requires {:?})",
-                o.name,
-                o.requires
+                crate::tr!(
+                    "Invalid selection: {} (requires {:?})",
+                    "无效选项：{}（依赖 {:?}）",
+                    o.name,
+                    o.requires
+                )
             );
         }
         if self.chip.family == Family::Esp {
-            ensure!(self.has("embassy"), "Embassy is required");
+            ensure!(
+                self.has("embassy"),
+                crate::tr!("Embassy is required", "必须启用 Embassy")
+            );
         }
         if self.has("stack-smashing-protection") && !self.toolchain.is_empty() {
             ensure!(
                 self.toolchain.starts_with("nightly") || self.toolchain == "esp",
-                "Stack protection requires nightly (or esp for Xtensa)"
+                crate::tr!(
+                    "Stack protection requires nightly (or esp for Xtensa)",
+                    "栈保护需要 nightly 工具链；Xtensa 使用 esp"
+                )
             );
         }
         Ok(())

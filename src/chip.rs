@@ -27,8 +27,10 @@ pub fn normalize(s: &str) -> String {
 
 impl Chip {
     pub fn cortex(name: &str) -> Result<Self> {
-        let target =
-            get_target_by_name(name).context("Unknown chip in bundled probe-rs database")?;
+        let target = get_target_by_name(name).context(crate::tr!(
+            "Unknown chip in bundled probe-rs database",
+            "内置 probe-rs 数据库中没有该芯片"
+        ))?;
         let name = target.name;
         let lower = normalize(&name);
         let family = if lower.starts_with("stm32") {
@@ -36,15 +38,24 @@ impl Chip {
         } else if lower.starts_with("nrf52") {
             Family::Nrf
         } else {
-            bail!("Unsupported Cortex-M family: {name}")
+            bail!(crate::tr!(
+                "Unsupported Cortex-M family: {name}",
+                "不支持的 Cortex-M 系列：{name}"
+            ))
         };
-        let core = target.cores.first().context("Chip has no core")?;
+        let core = target
+            .cores
+            .first()
+            .context(crate::tr!("Chip has no core", "芯片没有处理器内核信息"))?;
         let triple = match core.core_type {
             CoreType::Armv6m => "thumbv6m-none-eabi",
             CoreType::Armv7m => "thumbv7m-none-eabi",
             CoreType::Armv7em => "thumbv7em-none-eabi",
             CoreType::Armv8m => "thumbv8m.main-none-eabi",
-            _ => bail!("Not a supported Cortex-M chip: {name}"),
+            _ => bail!(crate::tr!(
+                "Not a supported Cortex-M chip: {name}",
+                "不支持的 Cortex-M 芯片：{name}"
+            )),
         };
         let hal_feature = if family == Family::Nrf {
             lower.split('_').next().unwrap_or(&lower).to_owned()

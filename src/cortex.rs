@@ -123,7 +123,10 @@ pub fn plan(p: &Project) -> Result<Files> {
             .filter_map(|r| r.as_ram_region())
             .map(|r| r.range.end - r.range.start)
             .max()
-            .context("No RAM region for allocator")?;
+            .context(crate::tr!(
+                "No RAM region for allocator",
+                "没有可用于分配器的 RAM 区域"
+            ))?;
         let reserve = if sd.is_some() {
             if ram <= 32 * 1024 {
                 8 * 1024
@@ -134,7 +137,10 @@ pub fn plan(p: &Project) -> Result<Files> {
             0
         };
         let heap_size = ((ram.saturating_sub(reserve)) / 4).min(16 * 1024);
-        ensure!(heap_size >= 256, "Not enough RAM for a heap");
+        ensure!(
+            heap_size >= 256,
+            crate::tr!("Not enough RAM for a heap", "RAM 不足，无法配置堆内存")
+        );
         init.push_str(&format!("    const HEAP_SIZE: usize = {heap_size};\n"));
         init.push_str("\n    static mut HEAP_MEM: [core::mem::MaybeUninit<u8>; HEAP_SIZE] = [core::mem::MaybeUninit::uninit(); HEAP_SIZE];\n    // SAFETY: initialized once before any task can allocate; memory lives for the whole program.\n    unsafe { HEAP.init(core::ptr::addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE); }\n");
     }
@@ -194,13 +200,13 @@ pub fn plan(p: &Project) -> Result<Files> {
             .iter()
             .filter_map(|r| r.as_nvm_region())
             .find(|r| r.range.start == 0)
-            .context("No NRF flash region")?;
+            .context(crate::tr!("No NRF flash region", "找不到 NRF Flash 区域"))?;
         let ram = target
             .memory_map
             .iter()
             .filter_map(|r| r.as_ram_region())
             .find(|r| r.range.start == 0x20000000)
-            .context("No NRF RAM region")?;
+            .context(crate::tr!("No NRF RAM region", "找不到 NRF RAM 区域"))?;
         // Pinned nrf-softdevice bindings: SD_FLASH_SIZE plus the 4 KiB MBR.
         let flash_start = match sd {
             Some("s112") => 0x19000,
@@ -220,7 +226,10 @@ pub fn plan(p: &Project) -> Result<Files> {
         };
         ensure!(
             flash_start < flash.range.end && ram_start < ram.range.end,
-            "Insufficient memory for this Softdevice template"
+            crate::tr!(
+                "Insufficient memory for this Softdevice template",
+                "内存不足，无法使用此 Softdevice 模板"
+            )
         );
         files.insert("memory.x".into(), format!("/* Verify Softdevice memory reservations against your binary and runtime configuration. */\nMEMORY {{\n FLASH : ORIGIN = {flash_start:#x}, LENGTH = {}\n RAM : ORIGIN = {ram_start:#x}, LENGTH = {}\n}}\n",flash.range.end-flash_start,ram.range.end-ram_start));
         build.push_str("    let out = std::path::PathBuf::from(std::env::var_os(\"OUT_DIR\").unwrap());\n    std::fs::copy(\"memory.x\", out.join(\"memory.x\")).unwrap();\n    println!(\"cargo:rustc-link-search={}\", out.display());\n    println!(\"cargo:rerun-if-changed=memory.x\");\n");

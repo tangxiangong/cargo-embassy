@@ -397,3 +397,214 @@ fn ble_templates_handle_task_allocation_before_spawning() {
         assert!(!main.contains("spawner.spawn(softdevice_task(sd)).unwrap()"));
     }
 }
+
+fn in_language<T>(language: i18n::Language, action: impl FnOnce() -> T) -> T {
+    struct Restore(i18n::Language);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            i18n::set(self.0);
+        }
+    }
+    let _restore = Restore(i18n::current());
+    i18n::set(language);
+    action()
+}
+
+#[test]
+fn locale_detection_obeys_environment_precedence() {
+    use i18n::Language::{En, Zh};
+    for (values, expected) in [
+        (vec![], En),
+        (vec![("LANG", "zh_CN.UTF-8")], Zh),
+        (vec![("LANG", "zh-TW")], Zh),
+        (vec![("LANG", "zh@Hans")], Zh),
+        (vec![("LC_ALL", "C"), ("LANG", "zh_CN.UTF-8")], En),
+        (
+            vec![("LC_MESSAGES", "zh_HK.UTF-8"), ("LANG", "en_US.UTF-8")],
+            Zh,
+        ),
+        (vec![("LC_ALL", ""), ("LANG", "zh_CN.UTF-8")], Zh),
+        (
+            vec![("CARGO_EMBASSY_LANG", "en"), ("LC_ALL", "zh_CN.UTF-8")],
+            En,
+        ),
+    ] {
+        assert_eq!(
+            i18n::detect(|key| values
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.to_string()))
+            .unwrap(),
+            expected
+        );
+    }
+    assert!(i18n::detect(|key| (key == "CARGO_EMBASSY_LANG").then(|| "fr".into())).is_err());
+}
+
+#[test]
+fn language_flag_is_global_without_discarding_subcommand_arguments() {
+    for args in [
+        vec![
+            "cargo-embassy",
+            "--lang",
+            "zh",
+            "init",
+            "demo",
+            "--chip",
+            "esp32c6",
+            "--dry-run",
+        ],
+        vec![
+            "cargo-embassy",
+            "init",
+            "demo",
+            "--chip",
+            "esp32c6",
+            "--dry-run",
+            "--lang=zh",
+        ],
+    ] {
+        let (lang, args) = i18n::prepare(args.into_iter().map(Into::into).collect(), |_| {
+            Some("invalid".into())
+        })
+        .unwrap();
+        assert_eq!(lang, i18n::Language::Zh);
+        let cli = Cli::try_parse_from(args).unwrap();
+        let Some(Command::Init(args)) = cli.command else {
+            panic!("init")
+        };
+        assert!(args.dry_run);
+        assert_eq!(args.name.as_deref(), Some("demo"));
+    }
+    let (_, args) = i18n::prepare(
+        ["tool", "--", "--lang", "zh"].map(Into::into).to_vec(),
+        |_| None,
+    )
+    .unwrap();
+    assert_eq!(args.len(), 4);
+    for args in [vec!["tool", "--lang"], vec!["tool", "--lang=fr"]] {
+        assert!(i18n::prepare(args.into_iter().map(Into::into).collect(), |_| None).is_err());
+    }
+}
+
+#[test]
+fn chinese_and_english_cli_help_and_errors_are_localized() {
+    in_language(i18n::Language::Zh, || {
+        let mut command = Cli::localized_command();
+        let help = command.render_help().to_string();
+        assert!(help.contains("用法：") && help.contains("命令") && help.contains("界面语言"));
+        let help = command
+            .find_subcommand_mut("init")
+            .unwrap()
+            .render_help()
+            .to_string();
+        assert!(help.contains("日志库") && help.contains("项目名称"));
+        let help_command = Cli::localized_command()
+            .try_get_matches_from(["tool", "help", "init"])
+            .unwrap_err();
+        assert_eq!(help_command.kind(), clap::error::ErrorKind::DisplayHelp);
+        assert!(help_command.to_string().contains("日志库"));
+        let err = Cli::localized_command()
+            .try_get_matches_from(["tool", "init", "demo", "--logging", "bad"])
+            .unwrap_err();
+        let text = i18n::clap_error(&err);
+        assert!(text.contains("参数值无效") && text.contains("bad"));
+    });
+    in_language(i18n::Language::En, || {
+        let help = Cli::localized_command().render_help().to_string();
+        assert!(help.contains("Usage:") && help.contains("Interface language"));
+    });
+}
+
+#[test]
+fn language_changes_messages_but_not_generation_results() {
+    let catalog = Catalog::new().unwrap();
+    for chip in ["esp32c6", "nrf52840", "stm32f103c6"] {
+        let mut p = catalog.project(catalog.chip(chip).unwrap()).unwrap();
+        p.name = "i18n-test-project".into();
+        let en = in_language(i18n::Language::En, || generate::plan(&catalog, &p).unwrap());
+        let zh = in_language(i18n::Language::Zh, || generate::plan(&catalog, &p).unwrap());
+        assert_eq!(en, zh);
+        p.name = "../invalid".into();
+        assert!(
+            in_language(i18n::Language::Zh, || p.validate().unwrap_err().to_string())
+                .contains("项目名称")
+        );
+        assert!(
+            in_language(i18n::Language::En, || p.validate().unwrap_err().to_string())
+                .contains("Project name")
+        );
+    }
+}
+
+#[test]
+fn option_translations_preserve_identifiers_and_have_english_fallback() {
+    in_language(i18n::Language::Zh, || {
+        assert_eq!(i18n::title("defmt", "Use defmt"), "defmt 二进制日志");
+        assert!(i18n::help("wifi", "").contains("Wi-Fi"));
+        assert_eq!(i18n::title("future-option", "New option"), "New option");
+        assert_eq!(i18n::title("esp32c6", "ESP32-C6"), "ESP32-C6");
+    });
+}
+
+#[test]
+fn language_flags_cannot_supply_a_missing_option_value() {
+    for option in [
+        "--chip",
+        "--option",
+        "-o",
+        "--output-path",
+        "-O",
+        "--toolchain",
+        "--logging",
+        "--panic-handler",
+        "--softdevice",
+    ] {
+        for language in [vec!["--lang", "zh"], vec!["--lang=zh"]] {
+            let mut args = vec!["tool", "init", "demo", option];
+            args.extend(language);
+            args.push("value");
+            let error =
+                i18n::prepare(args.into_iter().map(Into::into).collect(), |_| None).unwrap_err();
+            assert!(error.to_string().contains(option));
+        }
+    }
+    for args in [
+        vec!["tool", "init", "demo", "--chip=esp32c6", "--lang", "zh"],
+        vec!["tool", "init", "demo", "--chip", "esp32c6", "--lang=zh"],
+        vec![
+            "tool",
+            "init",
+            "demo",
+            "--output-path=--lang",
+            "--lang",
+            "zh",
+        ],
+    ] {
+        let (_, args) =
+            i18n::prepare(args.into_iter().map(Into::into).collect(), |_| None).unwrap();
+        assert!(Cli::try_parse_from(args).is_ok());
+    }
+}
+
+#[test]
+fn localized_parser_errors_preserve_diagnostic_context() {
+    in_language(i18n::Language::Zh, || {
+        let error = Cli::localized_command()
+            .try_get_matches_from(["tool", "help", "nonexistent"])
+            .unwrap_err();
+        let message = i18n::clap_error(&error);
+        assert!(message.contains("子命令：nonexistent"));
+        let mut error = clap::Error::new(clap::error::ErrorKind::ArgumentConflict);
+        error.insert(
+            clap::error::ContextKind::InvalidArg,
+            clap::error::ContextValue::String("--first".into()),
+        );
+        error.insert(
+            clap::error::ContextKind::PriorArg,
+            clap::error::ContextValue::String("--second".into()),
+        );
+        let message = i18n::clap_error(&error);
+        assert!(message.contains("--first") && message.contains("--second"));
+    });
+}

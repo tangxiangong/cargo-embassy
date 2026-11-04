@@ -3,16 +3,17 @@ mod cli;
 mod config;
 mod cortex;
 mod generate;
+mod i18n;
 mod tui;
 
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::FromArgMatches;
 use cli::{Cli, Command};
 use config::Catalog;
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("error: {error:#}");
+        eprintln!("{}: {error:#}", i18n::text("error", "错误"));
         std::process::exit(1);
     }
 }
@@ -21,7 +22,23 @@ fn run() -> Result<()> {
     if argv.get(1).is_some_and(|s| s == "embassy") {
         argv.remove(1);
     }
-    let cli = Cli::parse_from(argv);
+    let (language, argv) = i18n::prepare(argv, |key| std::env::var(key).ok())?;
+    i18n::set(language);
+    let matches = Cli::localized_command()
+        .try_get_matches_from(argv)
+        .unwrap_or_else(|error| {
+            if language == i18n::Language::Zh && error.kind() == clap::error::ErrorKind::DisplayHelp
+            {
+                print!("{}", i18n::help_output(&error.to_string()));
+                std::process::exit(0);
+            }
+            if language == i18n::Language::Zh && error.use_stderr() {
+                eprint!("{}", i18n::clap_error(&error));
+                std::process::exit(error.exit_code());
+            }
+            error.exit()
+        });
+    let cli = Cli::from_arg_matches(&matches)?;
     if matches!(cli.command, Some(Command::Docs)) {
         println!(
             "Embassy: https://embassy.dev/book/\nESP: https://docs.espressif.com/projects/rust/book/"
@@ -52,11 +69,15 @@ fn run() -> Result<()> {
                     && seen.insert(&o.name)
                 {
                     println!(
-                        "{}: {} [group: {}; requires: {}]",
-                        o.name,
-                        o.display_name,
-                        o.selection_group,
-                        o.requires.join(", ")
+                        "{}",
+                        tr!(
+                            "{}: {} [group: {}; requires: {}]",
+                            "{}：{} [分组：{}；依赖：{}]",
+                            o.name,
+                            i18n::title(&o.name, &o.display_name),
+                            o.selection_group,
+                            o.requires.join(", ")
+                        )
                     );
                 }
             }
@@ -69,14 +90,21 @@ fn run() -> Result<()> {
                 .flat_options
                 .iter()
                 .find(|o| o.name == option && p.config.is_option_compatible(o))
-                .context("Unknown or incompatible option")?;
+                .context(crate::tr!(
+                    "Unknown or incompatible option",
+                    "选项不存在或与当前芯片不兼容"
+                ))?;
             println!(
-                "{}\n{}\n{}\nGroup: {}\nRequires: {}\n",
-                o.name,
-                o.display_name,
-                o.help,
-                o.selection_group,
-                o.requires.join(", ")
+                "{}",
+                tr!(
+                    "{}\n{}\n{}\nGroup: {}\nRequires: {}\n",
+                    "{}\n{}\n{}\n分组：{}\n依赖：{}\n",
+                    o.name,
+                    i18n::title(&o.name, &o.display_name),
+                    i18n::help(&o.name, &o.help),
+                    o.selection_group,
+                    o.requires.join(", ")
+                )
             );
             return Ok(());
         }
@@ -103,14 +131,20 @@ fn run() -> Result<()> {
                     .and_then(|()| catalog.refresh(&mut p))
                     .and_then(|()| generate::plan(&catalog, &p));
                 match result {
-                    Ok(files) => println!("OK {name}: {} files", files.len()),
+                    Ok(files) => println!(
+                        "{}",
+                        tr!("OK {name}: {} files", "通过 {name}：{} 个文件", files.len())
+                    ),
                     Err(e) => failures.push(format!("{name}: {e:#}")),
                 }
             }
             anyhow::ensure!(
                 failures.is_empty(),
-                "Render checks failed:\n{}",
-                failures.join("\n")
+                crate::tr!(
+                    "Render checks failed:\n{}",
+                    "模板渲染检查失败：\n{}",
+                    failures.join("\n")
+                )
             );
             return Ok(());
         }
@@ -136,10 +170,14 @@ fn run() -> Result<()> {
     } else {
         let path = generate::write(&p, &files)?;
         println!(
-            "Created {} ({} files)\nNext: cd {} && cargo build",
-            path.display(),
-            files.len(),
-            path.display()
+            "{}",
+            tr!(
+                "Created {} ({} files)\nNext: cd {} && cargo build",
+                "已创建 {}（{} 个文件）\n下一步：cd {} && cargo build",
+                path.display(),
+                files.len(),
+                path.display()
+            )
         );
     }
     Ok(())
